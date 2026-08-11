@@ -350,10 +350,11 @@ function main() {
   console.error("Logs from your program will appear here");
 
   if (matchPattern(inputLine, pattern)) {
+    process.stdout.write(inputLine);
     process.exit(0);
-  } else {
-    process.exit(1);
   }
+
+  process.exit(1);
 }
 
 main();
