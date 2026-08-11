@@ -86,6 +86,12 @@ function parsePattern(pattern) {
       continue;
     }
 
+    if (ch === ".") {
+      tokens.push({ type: "wildcard" });
+      i += 1;
+      continue;
+    }
+
     tokens.push({ type: "literal", value: ch });
     i += 1;
   }
@@ -109,6 +115,10 @@ function matchAt(inputLine, startIndex, tokens, isEndAnchored = false) {
 
     if (token.type === "negGroup") {
       return !token.chars.has(ch);
+    }
+
+    if (token.type === "wildcard") {
+      return ch !== "\n";
     }
 
     return ch === token.value;
