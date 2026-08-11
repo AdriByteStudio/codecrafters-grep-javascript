@@ -24,6 +24,18 @@ function matchPattern(inputLine, pattern) {
     return false;
   }
 
+  if (pattern.startsWith("[^") && pattern.endsWith("]")) {
+    const excludedChars = new Set(pattern.slice(2, -1));
+
+    for (const ch of inputLine) {
+      if (!excludedChars.has(ch)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   if (pattern.startsWith("[") && pattern.endsWith("]")) {
     const groupChars = new Set(pattern.slice(1, -1));
 
