@@ -347,15 +347,37 @@ function matchPattern(inputLine, pattern) {
   return findMatchInLine(inputLine, pattern) !== null;
 }
 
+function highlightFirstMatchInLine(inputLine, pattern) {
+  const match = findMatchInLine(inputLine, pattern);
+  if (match === null) {
+    return null;
+  }
+
+  const highlightOpen = "\u001b[01;31m";
+  const highlightClose = "\u001b[m";
+
+  return (
+    inputLine.slice(0, match.startIndex) +
+    highlightOpen +
+    inputLine.slice(match.startIndex, match.endIndex) +
+    highlightClose +
+    inputLine.slice(match.endIndex)
+  );
+}
+
 function main() {
   const args = process.argv.slice(2);
   let onlyMatching = false;
+  let colorAlways = false;
   let pattern = null;
 
   if (args.length === 2 && args[0] === "-E") {
     pattern = args[1];
   } else if (args.length === 3 && args[0] === "-o" && args[1] === "-E") {
     onlyMatching = true;
+    pattern = args[2];
+  } else if (args.length === 3 && args[0] === "--color=always" && args[1] === "-E") {
+    colorAlways = true;
     pattern = args[2];
   }
 
@@ -373,7 +395,7 @@ function main() {
   });
 
   if (pattern === null) {
-    console.log("Expected arguments to be '-E <pattern>' or '-o -E <pattern>'");
+    console.log("Expected arguments to be '-E <pattern>', '-o -E <pattern>', or '--color=always -E <pattern>'");
     process.exit(1);
   }
 
@@ -405,6 +427,24 @@ function main() {
 
     if (matchingTexts.length > 0) {
       process.stdout.write(matchingTexts.join("\n"));
+      process.exit(0);
+    }
+
+    process.exit(1);
+  }
+
+  if (colorAlways) {
+    const highlightedLines = [];
+
+    for (const line of inputLines) {
+      const highlighted = highlightFirstMatchInLine(line, pattern);
+      if (highlighted !== null) {
+        highlightedLines.push(highlighted);
+      }
+    }
+
+    if (highlightedLines.length > 0) {
+      process.stdout.write(highlightedLines.join("\n"));
       process.exit(0);
     }
 
