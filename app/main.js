@@ -9,6 +9,21 @@ function matchPattern(inputLine, pattern) {
     return false;
   }
 
+  if (pattern === "\\w") {
+    for (const ch of inputLine) {
+      const isLower = ch >= "a" && ch <= "z";
+      const isUpper = ch >= "A" && ch <= "Z";
+      const isDigit = ch >= "0" && ch <= "9";
+      const isUnderscore = ch === "_";
+
+      if (isLower || isUpper || isDigit || isUnderscore) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   if (pattern.length === 1) {
     return inputLine.includes(pattern);
   } else {
