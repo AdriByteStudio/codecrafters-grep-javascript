@@ -28,6 +28,17 @@ function parsePattern(pattern) {
   for (let i = 0; i < rawPattern.length;) {
     const ch = rawPattern[i];
 
+    if (ch === "+") {
+      if (tokens.length === 0 || tokens[tokens.length - 1].oneOrMore) {
+        tokens.push({ type: "literal", value: "+" });
+      } else {
+        tokens[tokens.length - 1].oneOrMore = true;
+      }
+
+      i += 1;
+      continue;
+    }
+
     if (ch === "\\") {
       const escaped = rawPattern[i + 1];
       if (escaped === undefined) {
@@ -71,43 +82,61 @@ function parsePattern(pattern) {
 }
 
 function matchAt(inputLine, startIndex, tokens, isEndAnchored = false) {
-  let inputIndex = startIndex;
-
-  for (const token of tokens) {
-    if (inputIndex >= inputLine.length) {
-      return false;
+  function tokenMatches(token, ch) {
+    if (token.type === "digit") {
+      return isDigit(ch);
     }
 
-    const ch = inputLine[inputIndex];
-
-    if (token.type === "digit" && !isDigit(ch)) {
-      return false;
+    if (token.type === "word") {
+      return isWord(ch);
     }
 
-    if (token.type === "word" && !isWord(ch)) {
-      return false;
+    if (token.type === "posGroup") {
+      return token.chars.has(ch);
     }
 
-    if (token.type === "posGroup" && !token.chars.has(ch)) {
-      return false;
+    if (token.type === "negGroup") {
+      return !token.chars.has(ch);
     }
 
-    if (token.type === "negGroup" && token.chars.has(ch)) {
-      return false;
-    }
-
-    if (token.type === "literal" && ch !== token.value) {
-      return false;
-    }
-
-    inputIndex += 1;
+    return ch === token.value;
   }
 
-  if (isEndAnchored && inputIndex !== inputLine.length) {
+  function matchFrom(inputIndex, tokenIndex) {
+    if (tokenIndex === tokens.length) {
+      return !isEndAnchored || inputIndex === inputLine.length;
+    }
+
+    const token = tokens[tokenIndex];
+
+    if (!token.oneOrMore) {
+      if (inputIndex >= inputLine.length || !tokenMatches(token, inputLine[inputIndex])) {
+        return false;
+      }
+
+      return matchFrom(inputIndex + 1, tokenIndex + 1);
+    }
+
+    let maxIndex = inputIndex;
+    while (maxIndex < inputLine.length && tokenMatches(token, inputLine[maxIndex])) {
+      maxIndex += 1;
+    }
+
+    // Require one or more matches, then backtrack from greedy to minimal.
+    if (maxIndex === inputIndex) {
+      return false;
+    }
+
+    for (let nextIndex = maxIndex; nextIndex > inputIndex; nextIndex -= 1) {
+      if (matchFrom(nextIndex, tokenIndex + 1)) {
+        return true;
+      }
+    }
+
     return false;
   }
 
-  return true;
+  return matchFrom(startIndex, 0);
 }
 
 function matchPattern(inputLine, pattern) {
@@ -117,7 +146,7 @@ function matchPattern(inputLine, pattern) {
     return matchAt(inputLine, 0, tokens, isEndAnchored);
   }
 
-  for (let startIndex = 0; startIndex < inputLine.length; startIndex += 1) {
+  for (let startIndex = 0; startIndex <= inputLine.length; startIndex += 1) {
     if (matchAt(inputLine, startIndex, tokens, isEndAnchored)) {
       return true;
     }
