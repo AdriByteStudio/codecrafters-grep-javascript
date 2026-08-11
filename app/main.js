@@ -25,15 +25,27 @@ function parsePattern(pattern) {
 
   const tokens = [];
 
+  function attachQuantifier(qchar) {
+    if (tokens.length === 0 || tokens[tokens.length - 1].quantifier) {
+      tokens.push({ type: "literal", value: qchar });
+      return;
+    }
+
+    tokens[tokens.length - 1].quantifier = qchar;
+  }
+
   for (let i = 0; i < rawPattern.length;) {
     const ch = rawPattern[i];
 
     if (ch === "+") {
-      if (tokens.length === 0 || tokens[tokens.length - 1].oneOrMore) {
-        tokens.push({ type: "literal", value: "+" });
-      } else {
-        tokens[tokens.length - 1].oneOrMore = true;
-      }
+      attachQuantifier("+");
+
+      i += 1;
+      continue;
+    }
+
+    if (ch === "?") {
+      attachQuantifier("?");
 
       i += 1;
       continue;
@@ -109,12 +121,22 @@ function matchAt(inputLine, startIndex, tokens, isEndAnchored = false) {
 
     const token = tokens[tokenIndex];
 
-    if (!token.oneOrMore) {
+    if (token.quantifier !== "+" && token.quantifier !== "?") {
       if (inputIndex >= inputLine.length || !tokenMatches(token, inputLine[inputIndex])) {
         return false;
       }
 
       return matchFrom(inputIndex + 1, tokenIndex + 1);
+    }
+
+    if (token.quantifier === "?") {
+      if (inputIndex < inputLine.length && tokenMatches(token, inputLine[inputIndex])) {
+        if (matchFrom(inputIndex + 1, tokenIndex + 1)) {
+          return true;
+        }
+      }
+
+      return matchFrom(inputIndex, tokenIndex + 1);
     }
 
     let maxIndex = inputIndex;
