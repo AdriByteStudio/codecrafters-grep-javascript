@@ -177,12 +177,12 @@ function matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored = false) {
   return matchFrom(startIndex, 0);
 }
 
-function findMatchInLine(inputLine, pattern) {
+function findMatchInLine(inputLine, pattern, startSearchIndex = 0) {
   const parsedPatterns = expandAlternationPatterns(pattern).map((concretePattern) => {
     return parsePattern(concretePattern);
   });
 
-  for (let startIndex = 0; startIndex <= inputLine.length; startIndex += 1) {
+  for (let startIndex = startSearchIndex; startIndex <= inputLine.length; startIndex += 1) {
     for (const parsedPattern of parsedPatterns) {
       const { tokens, isStartAnchored, isEndAnchored } = parsedPattern;
 
@@ -384,9 +384,22 @@ function main() {
     const matchingTexts = [];
 
     for (const line of inputLines) {
-      const match = findMatchInLine(line, pattern);
-      if (match !== null) {
+      let searchIndex = 0;
+
+      while (searchIndex <= line.length) {
+        const match = findMatchInLine(line, pattern, searchIndex);
+        if (match === null) {
+          break;
+        }
+
         matchingTexts.push(match.text);
+
+        // Prevent infinite loops on zero-length matches.
+        if (match.endIndex === searchIndex) {
+          searchIndex += 1;
+        } else {
+          searchIndex = match.endIndex;
+        }
       }
     }
 
