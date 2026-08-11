@@ -390,6 +390,7 @@ function main() {
   const args = process.argv.slice(2);
   let onlyMatching = false;
   let colorAlways = false;
+  let colorNever = false;
   let pattern = null;
 
   if (args.length === 2 && args[0] === "-E") {
@@ -399,6 +400,9 @@ function main() {
     pattern = args[2];
   } else if (args.length === 3 && args[0] === "--color=always" && args[1] === "-E") {
     colorAlways = true;
+    pattern = args[2];
+  } else if (args.length === 3 && args[0] === "--color=never" && args[1] === "-E") {
+    colorNever = true;
     pattern = args[2];
   }
 
@@ -416,7 +420,7 @@ function main() {
   });
 
   if (pattern === null) {
-    console.log("Expected arguments to be '-E <pattern>', '-o -E <pattern>', or '--color=always -E <pattern>'");
+    console.log("Expected arguments to be '-E <pattern>', '-o -E <pattern>', '--color=always -E <pattern>', or '--color=never -E <pattern>'");
     process.exit(1);
   }
 
@@ -466,6 +470,23 @@ function main() {
 
     if (highlightedLines.length > 0) {
       process.stdout.write(highlightedLines.join("\n"));
+      process.exit(0);
+    }
+
+    process.exit(1);
+  }
+
+  // --color=never is plain text output (same as non-color mode).
+  if (colorNever) {
+    const matchingLines = [];
+    for (const line of inputLines) {
+      if (matchPattern(line, pattern)) {
+        matchingLines.push(line);
+      }
+    }
+
+    if (matchingLines.length > 0) {
+      process.stdout.write(matchingLines.join("\n"));
       process.exit(0);
     }
 
