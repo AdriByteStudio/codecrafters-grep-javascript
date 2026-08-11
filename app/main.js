@@ -99,7 +99,7 @@ function parsePattern(pattern) {
   return { tokens, isStartAnchored, isEndAnchored };
 }
 
-function matchAt(inputLine, startIndex, tokens, isEndAnchored = false) {
+function matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored = false) {
   function tokenMatches(token, ch) {
     if (token.type === "digit") {
       return isDigit(ch);
@@ -126,14 +126,18 @@ function matchAt(inputLine, startIndex, tokens, isEndAnchored = false) {
 
   function matchFrom(inputIndex, tokenIndex) {
     if (tokenIndex === tokens.length) {
-      return !isEndAnchored || inputIndex === inputLine.length;
+      if (!isEndAnchored || inputIndex === inputLine.length) {
+        return inputIndex;
+      }
+
+      return null;
     }
 
     const token = tokens[tokenIndex];
 
     if (token.quantifier !== "+" && token.quantifier !== "?") {
       if (inputIndex >= inputLine.length || !tokenMatches(token, inputLine[inputIndex])) {
-        return false;
+        return null;
       }
 
       return matchFrom(inputIndex + 1, tokenIndex + 1);
@@ -141,8 +145,9 @@ function matchAt(inputLine, startIndex, tokens, isEndAnchored = false) {
 
     if (token.quantifier === "?") {
       if (inputIndex < inputLine.length && tokenMatches(token, inputLine[inputIndex])) {
-        if (matchFrom(inputIndex + 1, tokenIndex + 1)) {
-          return true;
+        const consumeResult = matchFrom(inputIndex + 1, tokenIndex + 1);
+        if (consumeResult !== null) {
+          return consumeResult;
         }
       }
 
@@ -156,19 +161,47 @@ function matchAt(inputLine, startIndex, tokens, isEndAnchored = false) {
 
     // Require one or more matches, then backtrack from greedy to minimal.
     if (maxIndex === inputIndex) {
-      return false;
+      return null;
     }
 
     for (let nextIndex = maxIndex; nextIndex > inputIndex; nextIndex -= 1) {
-      if (matchFrom(nextIndex, tokenIndex + 1)) {
-        return true;
+      const result = matchFrom(nextIndex, tokenIndex + 1);
+      if (result !== null) {
+        return result;
       }
     }
 
-    return false;
+    return null;
   }
 
   return matchFrom(startIndex, 0);
+}
+
+function findMatchInLine(inputLine, pattern) {
+  const parsedPatterns = expandAlternationPatterns(pattern).map((concretePattern) => {
+    return parsePattern(concretePattern);
+  });
+
+  for (let startIndex = 0; startIndex <= inputLine.length; startIndex += 1) {
+    for (const parsedPattern of parsedPatterns) {
+      const { tokens, isStartAnchored, isEndAnchored } = parsedPattern;
+
+      if (isStartAnchored && startIndex !== 0) {
+        continue;
+      }
+
+      const endIndex = matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored);
+      if (endIndex !== null) {
+        return {
+          startIndex,
+          endIndex,
+          text: inputLine.slice(startIndex, endIndex),
+        };
+      }
+    }
+  }
+
+  return null;
 }
 
 function findClosingParen(pattern, openIndex) {
@@ -311,30 +344,21 @@ function expandAlternationPatterns(pattern) {
 }
 
 function matchPattern(inputLine, pattern) {
-  const patterns = expandAlternationPatterns(pattern);
-
-  for (const concretePattern of patterns) {
-    const { tokens, isStartAnchored, isEndAnchored } = parsePattern(concretePattern);
-
-    if (isStartAnchored) {
-      if (matchAt(inputLine, 0, tokens, isEndAnchored)) {
-        return true;
-      }
-      continue;
-    }
-
-    for (let startIndex = 0; startIndex <= inputLine.length; startIndex += 1) {
-      if (matchAt(inputLine, startIndex, tokens, isEndAnchored)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+  return findMatchInLine(inputLine, pattern) !== null;
 }
 
 function main() {
-  const pattern = process.argv[3];
+  const args = process.argv.slice(2);
+  let onlyMatching = false;
+  let pattern = null;
+
+  if (args.length === 2 && args[0] === "-E") {
+    pattern = args[1];
+  } else if (args.length === 3 && args[0] === "-o" && args[1] === "-E") {
+    onlyMatching = true;
+    pattern = args[2];
+  }
+
   let input = require("fs").readFileSync(0, "utf-8");
 
   if (input.endsWith("\n")) {
@@ -348,13 +372,31 @@ function main() {
     return line;
   });
 
-  if (process.argv[2] !== "-E") {
-    console.log("Expected first argument to be '-E'");
+  if (pattern === null) {
+    console.log("Expected arguments to be '-E <pattern>' or '-o -E <pattern>'");
     process.exit(1);
   }
 
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   console.error("Logs from your program will appear here");
+
+  if (onlyMatching) {
+    const matchingTexts = [];
+
+    for (const line of inputLines) {
+      const match = findMatchInLine(line, pattern);
+      if (match !== null) {
+        matchingTexts.push(match.text);
+      }
+    }
+
+    if (matchingTexts.length > 0) {
+      process.stdout.write(matchingTexts.join("\n"));
+      process.exit(0);
+    }
+
+    process.exit(1);
+  }
 
   const matchingLines = [];
   for (const line of inputLines) {
