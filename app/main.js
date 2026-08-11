@@ -1,4 +1,14 @@
 function matchPattern(inputLine, pattern) {
+  if (pattern === "\\d") {
+    for (const ch of inputLine) {
+      if (ch >= "0" && ch <= "9") {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   if (pattern.length === 1) {
     return inputLine.includes(pattern);
   } else {
