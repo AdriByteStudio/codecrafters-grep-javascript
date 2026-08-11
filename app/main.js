@@ -10,11 +10,17 @@ function isWord(ch) {
 
 function parsePattern(pattern) {
   let isStartAnchored = false;
+  let isEndAnchored = false;
   let rawPattern = pattern;
 
   if (rawPattern.startsWith("^")) {
     isStartAnchored = true;
     rawPattern = rawPattern.slice(1);
+  }
+
+  if (rawPattern.endsWith("$")) {
+    isEndAnchored = true;
+    rawPattern = rawPattern.slice(0, -1);
   }
 
   const tokens = [];
@@ -61,10 +67,10 @@ function parsePattern(pattern) {
     i += 1;
   }
 
-  return { tokens, isStartAnchored };
+  return { tokens, isStartAnchored, isEndAnchored };
 }
 
-function matchAt(inputLine, startIndex, tokens) {
+function matchAt(inputLine, startIndex, tokens, isEndAnchored = false) {
   let inputIndex = startIndex;
 
   for (const token of tokens) {
@@ -97,18 +103,22 @@ function matchAt(inputLine, startIndex, tokens) {
     inputIndex += 1;
   }
 
+  if (isEndAnchored && inputIndex !== inputLine.length) {
+    return false;
+  }
+
   return true;
 }
 
 function matchPattern(inputLine, pattern) {
-  const { tokens, isStartAnchored } = parsePattern(pattern);
+  const { tokens, isStartAnchored, isEndAnchored } = parsePattern(pattern);
 
   if (isStartAnchored) {
-    return matchAt(inputLine, 0, tokens);
+    return matchAt(inputLine, 0, tokens, isEndAnchored);
   }
 
   for (let startIndex = 0; startIndex < inputLine.length; startIndex += 1) {
-    if (matchAt(inputLine, startIndex, tokens)) {
+    if (matchAt(inputLine, startIndex, tokens, isEndAnchored)) {
       return true;
     }
   }
