@@ -347,22 +347,43 @@ function matchPattern(inputLine, pattern) {
   return findMatchInLine(inputLine, pattern) !== null;
 }
 
-function highlightFirstMatchInLine(inputLine, pattern) {
-  const match = findMatchInLine(inputLine, pattern);
-  if (match === null) {
-    return null;
-  }
-
+function highlightAllMatchesInLine(inputLine, pattern) {
   const highlightOpen = "\u001b[01;31m";
   const highlightClose = "\u001b[m";
 
-  return (
-    inputLine.slice(0, match.startIndex) +
-    highlightOpen +
-    inputLine.slice(match.startIndex, match.endIndex) +
-    highlightClose +
-    inputLine.slice(match.endIndex)
-  );
+  let highlighted = "";
+  let trailingStart = 0;
+  let searchIndex = 0;
+  let foundAny = false;
+
+  while (searchIndex <= inputLine.length) {
+    const match = findMatchInLine(inputLine, pattern, searchIndex);
+    if (match === null) {
+      break;
+    }
+
+    foundAny = true;
+    highlighted += inputLine.slice(trailingStart, match.startIndex);
+    highlighted += highlightOpen;
+    highlighted += inputLine.slice(match.startIndex, match.endIndex);
+    highlighted += highlightClose;
+
+    trailingStart = match.endIndex;
+
+    // Prevent infinite loops on zero-length matches.
+    if (match.endIndex === searchIndex) {
+      searchIndex += 1;
+    } else {
+      searchIndex = match.endIndex;
+    }
+  }
+
+  if (!foundAny) {
+    return null;
+  }
+
+  highlighted += inputLine.slice(trailingStart);
+  return highlighted;
 }
 
 function main() {
@@ -437,7 +458,7 @@ function main() {
     const highlightedLines = [];
 
     for (const line of inputLines) {
-      const highlighted = highlightFirstMatchInLine(line, pattern);
+      const highlighted = highlightAllMatchesInLine(line, pattern);
       if (highlighted !== null) {
         highlightedLines.push(highlighted);
       }
