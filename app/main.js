@@ -335,11 +335,18 @@ function matchPattern(inputLine, pattern) {
 
 function main() {
   const pattern = process.argv[3];
-  let inputLine = require("fs").readFileSync(0, "utf-8");
+  let input = require("fs").readFileSync(0, "utf-8");
 
-  if (inputLine.endsWith("\n")) {
-    inputLine = inputLine.slice(0, -1);
+  if (input.endsWith("\n")) {
+    input = input.slice(0, -1);
   }
+
+  const inputLines = input.split("\n").map((line) => {
+    if (line.endsWith("\r")) {
+      return line.slice(0, -1);
+    }
+    return line;
+  });
 
   if (process.argv[2] !== "-E") {
     console.log("Expected first argument to be '-E'");
@@ -349,8 +356,15 @@ function main() {
   // You can use print statements as follows for debugging, they'll be visible when running tests.
   console.error("Logs from your program will appear here");
 
-  if (matchPattern(inputLine, pattern)) {
-    process.stdout.write(inputLine);
+  const matchingLines = [];
+  for (const line of inputLines) {
+    if (matchPattern(line, pattern)) {
+      matchingLines.push(line);
+    }
+  }
+
+  if (matchingLines.length > 0) {
+    process.stdout.write(matchingLines.join("\n"));
     process.exit(0);
   }
 
