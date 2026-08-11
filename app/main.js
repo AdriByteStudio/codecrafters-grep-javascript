@@ -394,23 +394,51 @@ function main() {
   let colorNever = false;
   let pattern = null;
 
-  if (args.length === 2 && args[0] === "-E") {
+  let inputFilePath = null;
+
+  if (args.length >= 2 && args[0] === "-E") {
     pattern = args[1];
-  } else if (args.length === 3 && args[0] === "-o" && args[1] === "-E") {
+    if (args.length >= 3) {
+      inputFilePath = args[2];
+    }
+  } else if (args.length >= 3 && args[0] === "-o" && args[1] === "-E") {
     onlyMatching = true;
     pattern = args[2];
-  } else if (args.length === 3 && args[0] === "--color=always" && args[1] === "-E") {
+    if (args.length >= 4) {
+      inputFilePath = args[3];
+    }
+  } else if (args.length >= 3 && args[0] === "--color=always" && args[1] === "-E") {
     colorAlways = true;
     pattern = args[2];
-  } else if (args.length === 3 && args[0] === "--color=auto" && args[1] === "-E") {
+    if (args.length >= 4) {
+      inputFilePath = args[3];
+    }
+  } else if (args.length >= 3 && args[0] === "--color=auto" && args[1] === "-E") {
     colorAuto = true;
     pattern = args[2];
-  } else if (args.length === 3 && args[0] === "--color=never" && args[1] === "-E") {
+    if (args.length >= 4) {
+      inputFilePath = args[3];
+    }
+  } else if (args.length >= 3 && args[0] === "--color=never" && args[1] === "-E") {
     colorNever = true;
     pattern = args[2];
+    if (args.length >= 4) {
+      inputFilePath = args[3];
+    }
   }
 
-  let input = require("fs").readFileSync(0, "utf-8");
+  if (
+    (args[0] === "-E" && args.length > 3) ||
+    (args[0] === "-o" && args[1] === "-E" && args.length > 4) ||
+    (args[0] === "--color=always" && args[1] === "-E" && args.length > 4) ||
+    (args[0] === "--color=auto" && args[1] === "-E" && args.length > 4) ||
+    (args[0] === "--color=never" && args[1] === "-E" && args.length > 4)
+  ) {
+    pattern = null;
+  }
+
+  const fs = require("fs");
+  let input = inputFilePath === null ? fs.readFileSync(0, "utf-8") : fs.readFileSync(inputFilePath, "utf-8");
 
   if (input.endsWith("\n")) {
     input = input.slice(0, -1);
