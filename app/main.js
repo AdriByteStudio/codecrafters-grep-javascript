@@ -392,6 +392,7 @@ function main() {
   let colorAlways = false;
   let colorAuto = false;
   let colorNever = false;
+  let recursiveSearch = false;
   let pattern = null;
 
   let inputFilePaths = [];
@@ -399,6 +400,10 @@ function main() {
   if (args.length >= 2 && args[0] === "-E") {
     pattern = args[1];
     inputFilePaths = args.slice(2);
+  } else if (args.length >= 3 && args[0] === "-r" && args[1] === "-E") {
+    recursiveSearch = true;
+    pattern = args[2];
+    inputFilePaths = args.slice(3);
   } else if (args.length >= 3 && args[0] === "-o" && args[1] === "-E") {
     onlyMatching = true;
     pattern = args[2];
@@ -418,6 +423,27 @@ function main() {
   }
 
   const fs = require("fs");
+  const path = require("path");
+
+  function collectFilesRecursively(rootDir) {
+    const files = [];
+
+    function walk(currentPath) {
+      const entries = fs.readdirSync(currentPath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const entryPath = path.join(currentPath, entry.name);
+        if (entry.isDirectory()) {
+          walk(entryPath);
+        } else if (entry.isFile()) {
+          files.push(entryPath);
+        }
+      }
+    }
+
+    walk(rootDir);
+    return files;
+  }
 
   function toInputLines(text) {
     let normalized = text;
@@ -435,7 +461,16 @@ function main() {
   }
 
   const inputs = [];
-  if (inputFilePaths.length === 0) {
+  if (recursiveSearch) {
+    for (const rootDir of inputFilePaths) {
+      const filePaths = collectFilesRecursively(rootDir);
+      for (const filePath of filePaths) {
+        const fileText = fs.readFileSync(filePath, "utf-8");
+        const displayPath = path.relative(process.cwd(), filePath);
+        inputs.push({ filePath: displayPath, lines: toInputLines(fileText) });
+      }
+    }
+  } else if (inputFilePaths.length === 0) {
     const stdinText = fs.readFileSync(0, "utf-8");
     inputs.push({ filePath: null, lines: toInputLines(stdinText) });
   } else {
@@ -446,7 +481,7 @@ function main() {
   }
 
   if (pattern === null) {
-    console.log("Expected arguments to be '-E <pattern>', '-o -E <pattern>', '--color=always -E <pattern>', '--color=auto -E <pattern>', or '--color=never -E <pattern>'");
+    console.log("Expected arguments to be '-E <pattern>', '-r -E <pattern> <dir>', '-o -E <pattern>', '--color=always -E <pattern>', '--color=auto -E <pattern>', or '--color=never -E <pattern>'");
     process.exit(1);
   }
 
@@ -528,7 +563,7 @@ function main() {
     }
 
     const matchingLines = [];
-    const shouldPrefixFilenames = inputFilePaths.length > 1;
+    const shouldPrefixFilenames = recursiveSearch || inputFilePaths.length > 1;
 
     for (const input of inputs) {
       for (const line of input.lines) {
@@ -549,7 +584,7 @@ function main() {
   // --color=never is plain text output (same as non-color mode).
   if (colorNever) {
     const matchingLines = [];
-    const shouldPrefixFilenames = inputFilePaths.length > 1;
+    const shouldPrefixFilenames = recursiveSearch || inputFilePaths.length > 1;
 
     for (const input of inputs) {
       for (const line of input.lines) {
@@ -568,7 +603,7 @@ function main() {
   }
 
   const matchingLines = [];
-  const shouldPrefixFilenames = inputFilePaths.length > 1;
+  const shouldPrefixFilenames = recursiveSearch || inputFilePaths.length > 1;
 
   for (const input of inputs) {
     for (const line of input.lines) {
