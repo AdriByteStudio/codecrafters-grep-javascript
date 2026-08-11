@@ -9,13 +9,21 @@ function isWord(ch) {
 }
 
 function parsePattern(pattern) {
+  let isStartAnchored = false;
+  let rawPattern = pattern;
+
+  if (rawPattern.startsWith("^")) {
+    isStartAnchored = true;
+    rawPattern = rawPattern.slice(1);
+  }
+
   const tokens = [];
 
-  for (let i = 0; i < pattern.length;) {
-    const ch = pattern[i];
+  for (let i = 0; i < rawPattern.length;) {
+    const ch = rawPattern[i];
 
     if (ch === "\\") {
-      const escaped = pattern[i + 1];
+      const escaped = rawPattern[i + 1];
       if (escaped === undefined) {
         throw new Error(`Invalid pattern ${pattern}`);
       }
@@ -33,12 +41,12 @@ function parsePattern(pattern) {
     }
 
     if (ch === "[") {
-      const closeIndex = pattern.indexOf("]", i + 1);
+      const closeIndex = rawPattern.indexOf("]", i + 1);
       if (closeIndex === -1) {
         throw new Error(`Invalid pattern ${pattern}`);
       }
 
-      const content = pattern.slice(i + 1, closeIndex);
+      const content = rawPattern.slice(i + 1, closeIndex);
       if (content.startsWith("^")) {
         tokens.push({ type: "negGroup", chars: new Set(content.slice(1)) });
       } else {
@@ -53,7 +61,7 @@ function parsePattern(pattern) {
     i += 1;
   }
 
-  return tokens;
+  return { tokens, isStartAnchored };
 }
 
 function matchAt(inputLine, startIndex, tokens) {
@@ -93,7 +101,11 @@ function matchAt(inputLine, startIndex, tokens) {
 }
 
 function matchPattern(inputLine, pattern) {
-  const tokens = parsePattern(pattern);
+  const { tokens, isStartAnchored } = parsePattern(pattern);
+
+  if (isStartAnchored) {
+    return matchAt(inputLine, 0, tokens);
+  }
 
   for (let startIndex = 0; startIndex < inputLine.length; startIndex += 1) {
     if (matchAt(inputLine, startIndex, tokens)) {
