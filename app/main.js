@@ -390,6 +390,7 @@ function main() {
   const args = process.argv.slice(2);
   let onlyMatching = false;
   let colorAlways = false;
+  let colorAuto = false;
   let colorNever = false;
   let pattern = null;
 
@@ -400,6 +401,9 @@ function main() {
     pattern = args[2];
   } else if (args.length === 3 && args[0] === "--color=always" && args[1] === "-E") {
     colorAlways = true;
+    pattern = args[2];
+  } else if (args.length === 3 && args[0] === "--color=auto" && args[1] === "-E") {
+    colorAuto = true;
     pattern = args[2];
   } else if (args.length === 3 && args[0] === "--color=never" && args[1] === "-E") {
     colorNever = true;
@@ -420,7 +424,7 @@ function main() {
   });
 
   if (pattern === null) {
-    console.log("Expected arguments to be '-E <pattern>', '-o -E <pattern>', '--color=always -E <pattern>', or '--color=never -E <pattern>'");
+    console.log("Expected arguments to be '-E <pattern>', '-o -E <pattern>', '--color=always -E <pattern>', '--color=auto -E <pattern>', or '--color=never -E <pattern>'");
     process.exit(1);
   }
 
@@ -470,6 +474,40 @@ function main() {
 
     if (highlightedLines.length > 0) {
       process.stdout.write(highlightedLines.join("\n"));
+      process.exit(0);
+    }
+
+    process.exit(1);
+  }
+
+  if (colorAuto) {
+    if (process.stdout.isTTY) {
+      const highlightedLines = [];
+
+      for (const line of inputLines) {
+        const highlighted = highlightAllMatchesInLine(line, pattern);
+        if (highlighted !== null) {
+          highlightedLines.push(highlighted);
+        }
+      }
+
+      if (highlightedLines.length > 0) {
+        process.stdout.write(highlightedLines.join("\n"));
+        process.exit(0);
+      }
+
+      process.exit(1);
+    }
+
+    const matchingLines = [];
+    for (const line of inputLines) {
+      if (matchPattern(line, pattern)) {
+        matchingLines.push(line);
+      }
+    }
+
+    if (matchingLines.length > 0) {
+      process.stdout.write(matchingLines.join("\n"));
       process.exit(0);
     }
 
