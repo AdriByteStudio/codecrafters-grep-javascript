@@ -394,62 +394,56 @@ function main() {
   let colorNever = false;
   let pattern = null;
 
-  let inputFilePath = null;
+  let inputFilePaths = [];
 
   if (args.length >= 2 && args[0] === "-E") {
     pattern = args[1];
-    if (args.length >= 3) {
-      inputFilePath = args[2];
-    }
+    inputFilePaths = args.slice(2);
   } else if (args.length >= 3 && args[0] === "-o" && args[1] === "-E") {
     onlyMatching = true;
     pattern = args[2];
-    if (args.length >= 4) {
-      inputFilePath = args[3];
-    }
+    inputFilePaths = args.slice(3);
   } else if (args.length >= 3 && args[0] === "--color=always" && args[1] === "-E") {
     colorAlways = true;
     pattern = args[2];
-    if (args.length >= 4) {
-      inputFilePath = args[3];
-    }
+    inputFilePaths = args.slice(3);
   } else if (args.length >= 3 && args[0] === "--color=auto" && args[1] === "-E") {
     colorAuto = true;
     pattern = args[2];
-    if (args.length >= 4) {
-      inputFilePath = args[3];
-    }
+    inputFilePaths = args.slice(3);
   } else if (args.length >= 3 && args[0] === "--color=never" && args[1] === "-E") {
     colorNever = true;
     pattern = args[2];
-    if (args.length >= 4) {
-      inputFilePath = args[3];
-    }
-  }
-
-  if (
-    (args[0] === "-E" && args.length > 3) ||
-    (args[0] === "-o" && args[1] === "-E" && args.length > 4) ||
-    (args[0] === "--color=always" && args[1] === "-E" && args.length > 4) ||
-    (args[0] === "--color=auto" && args[1] === "-E" && args.length > 4) ||
-    (args[0] === "--color=never" && args[1] === "-E" && args.length > 4)
-  ) {
-    pattern = null;
+    inputFilePaths = args.slice(3);
   }
 
   const fs = require("fs");
-  let input = inputFilePath === null ? fs.readFileSync(0, "utf-8") : fs.readFileSync(inputFilePath, "utf-8");
 
-  if (input.endsWith("\n")) {
-    input = input.slice(0, -1);
+  function toInputLines(text) {
+    let normalized = text;
+
+    if (normalized.endsWith("\n")) {
+      normalized = normalized.slice(0, -1);
+    }
+
+    return normalized.split("\n").map((line) => {
+      if (line.endsWith("\r")) {
+        return line.slice(0, -1);
+      }
+      return line;
+    });
   }
 
-  const inputLines = input.split("\n").map((line) => {
-    if (line.endsWith("\r")) {
-      return line.slice(0, -1);
+  const inputs = [];
+  if (inputFilePaths.length === 0) {
+    const stdinText = fs.readFileSync(0, "utf-8");
+    inputs.push({ filePath: null, lines: toInputLines(stdinText) });
+  } else {
+    for (const filePath of inputFilePaths) {
+      const fileText = fs.readFileSync(filePath, "utf-8");
+      inputs.push({ filePath, lines: toInputLines(fileText) });
     }
-    return line;
-  });
+  }
 
   if (pattern === null) {
     console.log("Expected arguments to be '-E <pattern>', '-o -E <pattern>', '--color=always -E <pattern>', '--color=auto -E <pattern>', or '--color=never -E <pattern>'");
@@ -462,22 +456,24 @@ function main() {
   if (onlyMatching) {
     const matchingTexts = [];
 
-    for (const line of inputLines) {
-      let searchIndex = 0;
+    for (const input of inputs) {
+      for (const line of input.lines) {
+        let searchIndex = 0;
 
-      while (searchIndex <= line.length) {
-        const match = findMatchInLine(line, pattern, searchIndex);
-        if (match === null) {
-          break;
-        }
+        while (searchIndex <= line.length) {
+          const match = findMatchInLine(line, pattern, searchIndex);
+          if (match === null) {
+            break;
+          }
 
-        matchingTexts.push(match.text);
+          matchingTexts.push(match.text);
 
-        // Prevent infinite loops on zero-length matches.
-        if (match.endIndex === searchIndex) {
-          searchIndex += 1;
-        } else {
-          searchIndex = match.endIndex;
+          // Prevent infinite loops on zero-length matches.
+          if (match.endIndex === searchIndex) {
+            searchIndex += 1;
+          } else {
+            searchIndex = match.endIndex;
+          }
         }
       }
     }
@@ -493,10 +489,12 @@ function main() {
   if (colorAlways) {
     const highlightedLines = [];
 
-    for (const line of inputLines) {
-      const highlighted = highlightAllMatchesInLine(line, pattern);
-      if (highlighted !== null) {
-        highlightedLines.push(highlighted);
+    for (const input of inputs) {
+      for (const line of input.lines) {
+        const highlighted = highlightAllMatchesInLine(line, pattern);
+        if (highlighted !== null) {
+          highlightedLines.push(highlighted);
+        }
       }
     }
 
@@ -512,10 +510,12 @@ function main() {
     if (process.stdout.isTTY) {
       const highlightedLines = [];
 
-      for (const line of inputLines) {
-        const highlighted = highlightAllMatchesInLine(line, pattern);
-        if (highlighted !== null) {
-          highlightedLines.push(highlighted);
+      for (const input of inputs) {
+        for (const line of input.lines) {
+          const highlighted = highlightAllMatchesInLine(line, pattern);
+          if (highlighted !== null) {
+            highlightedLines.push(highlighted);
+          }
         }
       }
 
@@ -528,9 +528,13 @@ function main() {
     }
 
     const matchingLines = [];
-    for (const line of inputLines) {
-      if (matchPattern(line, pattern)) {
-        matchingLines.push(line);
+    const shouldPrefixFilenames = inputFilePaths.length > 1;
+
+    for (const input of inputs) {
+      for (const line of input.lines) {
+        if (matchPattern(line, pattern)) {
+          matchingLines.push(shouldPrefixFilenames ? `${input.filePath}:${line}` : line);
+        }
       }
     }
 
@@ -545,9 +549,13 @@ function main() {
   // --color=never is plain text output (same as non-color mode).
   if (colorNever) {
     const matchingLines = [];
-    for (const line of inputLines) {
-      if (matchPattern(line, pattern)) {
-        matchingLines.push(line);
+    const shouldPrefixFilenames = inputFilePaths.length > 1;
+
+    for (const input of inputs) {
+      for (const line of input.lines) {
+        if (matchPattern(line, pattern)) {
+          matchingLines.push(shouldPrefixFilenames ? `${input.filePath}:${line}` : line);
+        }
       }
     }
 
@@ -560,9 +568,13 @@ function main() {
   }
 
   const matchingLines = [];
-  for (const line of inputLines) {
-    if (matchPattern(line, pattern)) {
-      matchingLines.push(line);
+  const shouldPrefixFilenames = inputFilePaths.length > 1;
+
+  for (const input of inputs) {
+    for (const line of input.lines) {
+      if (matchPattern(line, pattern)) {
+        matchingLines.push(shouldPrefixFilenames ? `${input.filePath}:${line}` : line);
+      }
     }
   }
 
