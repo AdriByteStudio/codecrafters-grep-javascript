@@ -171,16 +171,162 @@ function matchAt(inputLine, startIndex, tokens, isEndAnchored = false) {
   return matchFrom(startIndex, 0);
 }
 
-function matchPattern(inputLine, pattern) {
-  const { tokens, isStartAnchored, isEndAnchored } = parsePattern(pattern);
+function findClosingParen(pattern, openIndex) {
+  let depth = 0;
+  let inCharClass = false;
 
-  if (isStartAnchored) {
-    return matchAt(inputLine, 0, tokens, isEndAnchored);
+  for (let i = openIndex; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+
+    if (!inCharClass && ch === "[") {
+      inCharClass = true;
+      continue;
+    }
+
+    if (inCharClass) {
+      if (ch === "]") {
+        inCharClass = false;
+      }
+      continue;
+    }
+
+    if (ch === "(") {
+      depth += 1;
+      continue;
+    }
+
+    if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        return i;
+      }
+    }
   }
 
-  for (let startIndex = 0; startIndex <= inputLine.length; startIndex += 1) {
-    if (matchAt(inputLine, startIndex, tokens, isEndAnchored)) {
-      return true;
+  return -1;
+}
+
+function splitAlternatives(groupContent) {
+  const alternatives = [];
+  let start = 0;
+  let depth = 0;
+  let inCharClass = false;
+
+  for (let i = 0; i < groupContent.length; i += 1) {
+    const ch = groupContent[i];
+
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+
+    if (!inCharClass && ch === "[") {
+      inCharClass = true;
+      continue;
+    }
+
+    if (inCharClass) {
+      if (ch === "]") {
+        inCharClass = false;
+      }
+      continue;
+    }
+
+    if (ch === "(") {
+      depth += 1;
+      continue;
+    }
+
+    if (ch === ")") {
+      depth -= 1;
+      continue;
+    }
+
+    if (ch === "|" && depth === 0) {
+      alternatives.push(groupContent.slice(start, i));
+      start = i + 1;
+    }
+  }
+
+  alternatives.push(groupContent.slice(start));
+  return alternatives;
+}
+
+function expandAlternationPatterns(pattern) {
+  let openIndex = -1;
+  let inCharClass = false;
+
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+
+    if (ch === "\\") {
+      i += 1;
+      continue;
+    }
+
+    if (!inCharClass && ch === "[") {
+      inCharClass = true;
+      continue;
+    }
+
+    if (inCharClass) {
+      if (ch === "]") {
+        inCharClass = false;
+      }
+      continue;
+    }
+
+    if (ch === "(") {
+      openIndex = i;
+      break;
+    }
+  }
+
+  if (openIndex === -1) {
+    return [pattern];
+  }
+
+  const closeIndex = findClosingParen(pattern, openIndex);
+  if (closeIndex === -1) {
+    throw new Error(`Invalid pattern ${pattern}`);
+  }
+
+  const prefix = pattern.slice(0, openIndex);
+  const groupContent = pattern.slice(openIndex + 1, closeIndex);
+  const suffix = pattern.slice(closeIndex + 1);
+  const alternatives = splitAlternatives(groupContent);
+
+  const expanded = [];
+  for (const alt of alternatives) {
+    const combined = `${prefix}${alt}${suffix}`;
+    expanded.push(...expandAlternationPatterns(combined));
+  }
+
+  return expanded;
+}
+
+function matchPattern(inputLine, pattern) {
+  const patterns = expandAlternationPatterns(pattern);
+
+  for (const concretePattern of patterns) {
+    const { tokens, isStartAnchored, isEndAnchored } = parsePattern(concretePattern);
+
+    if (isStartAnchored) {
+      if (matchAt(inputLine, 0, tokens, isEndAnchored)) {
+        return true;
+      }
+      continue;
+    }
+
+    for (let startIndex = 0; startIndex <= inputLine.length; startIndex += 1) {
+      if (matchAt(inputLine, startIndex, tokens, isEndAnchored)) {
+        return true;
+      }
     }
   }
 
