@@ -66,6 +66,29 @@ function parsePattern(pattern) {
     tokens[tokens.length - 1].atLeastCount = minCount;
   }
 
+  function attachRangeQuantifier(minCount, maxCount) {
+    if (
+      tokens.length === 0 ||
+      tokens[tokens.length - 1].quantifier ||
+      tokens[tokens.length - 1].exactCount !== undefined ||
+      tokens[tokens.length - 1].atLeastCount !== undefined ||
+      tokens[tokens.length - 1].rangeCount !== undefined
+    ) {
+      tokens.push({ type: "literal", value: "{" });
+      for (const digit of String(minCount)) {
+        tokens.push({ type: "literal", value: digit });
+      }
+      tokens.push({ type: "literal", value: "," });
+      for (const digit of String(maxCount)) {
+        tokens.push({ type: "literal", value: digit });
+      }
+      tokens.push({ type: "literal", value: "}" });
+      return;
+    }
+
+    tokens[tokens.length - 1].rangeCount = { minCount, maxCount };
+  }
+
   for (let i = 0; i < rawPattern.length;) {
     const ch = rawPattern[i];
 
@@ -104,6 +127,18 @@ function parsePattern(pattern) {
           attachAtLeastQuantifier(Number(content.slice(0, -1)));
           i = closeIndex + 1;
           continue;
+        }
+
+        if (/^\d+,\d+$/.test(content)) {
+          const [minText, maxText] = content.split(",");
+          const minCount = Number(minText);
+          const maxCount = Number(maxText);
+
+          if (minCount <= maxCount) {
+            attachRangeQuantifier(minCount, maxCount);
+            i = closeIndex + 1;
+            continue;
+          }
         }
       }
     }
@@ -216,6 +251,30 @@ function matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored = false) {
       }
 
       for (let nextIndex = maxIndex; nextIndex >= inputIndex + token.atLeastCount; nextIndex -= 1) {
+        const result = matchFrom(nextIndex, tokenIndex + 1);
+        if (result !== null) {
+          return result;
+        }
+      }
+
+      return null;
+    }
+
+    if (token.rangeCount !== undefined) {
+      const { minCount, maxCount } = token.rangeCount;
+      let maxIndex = inputIndex;
+      let matchedCount = 0;
+
+      while (maxIndex < inputLine.length && matchedCount < maxCount && tokenMatches(token, inputLine[maxIndex])) {
+        maxIndex += 1;
+        matchedCount += 1;
+      }
+
+      if (matchedCount < minCount) {
+        return null;
+      }
+
+      for (let nextIndex = maxIndex; nextIndex >= inputIndex + minCount; nextIndex -= 1) {
         const result = matchFrom(nextIndex, tokenIndex + 1);
         if (result !== null) {
           return result;
@@ -408,6 +467,20 @@ function expandAlternationPatterns(pattern, maxInputLength = null) {
       };
     }
 
+    if (/^\d+,\d+$/.test(content)) {
+      const [minText, maxText] = content.split(",");
+      const minCount = Number(minText);
+      const maxCount = Number(maxText);
+
+      if (minCount <= maxCount) {
+        return {
+          minCount,
+          maxCount,
+          endIndex: closeIndex + 1,
+        };
+      }
+    }
+
     return null;
   }
 
@@ -497,6 +570,26 @@ function expandAlternationPatterns(pattern, maxInputLength = null) {
     suffix = pattern.slice(groupQuantifier.endIndex);
 
     for (let repeatCount = groupQuantifier.atLeastCount; repeatCount <= maxRepeatCount; repeatCount += 1) {
+      const repeatedAlternatives = expandRepeatedAlternatives(alternatives, repeatCount);
+      for (const alt of repeatedAlternatives) {
+        const combined = `${prefix}${alt}${suffix}`;
+        expanded.push(...expandAlternationPatterns(combined, maxInputLength));
+      }
+    }
+
+    return expanded;
+  }
+
+  if (groupQuantifier !== null && groupQuantifier.minCount !== undefined && groupQuantifier.maxCount !== undefined) {
+    const minAltLength = Math.min(...alternatives.map((alt) => alt.length));
+    const safeMinAltLength = minAltLength <= 0 ? 1 : minAltLength;
+    const lineBound = maxInputLength === null ? groupQuantifier.maxCount : maxInputLength;
+    const maxRepeatByLength = Math.floor(lineBound / safeMinAltLength);
+    const upperRepeatCount = Math.min(groupQuantifier.maxCount, maxRepeatByLength);
+
+    suffix = pattern.slice(groupQuantifier.endIndex);
+
+    for (let repeatCount = groupQuantifier.minCount; repeatCount <= upperRepeatCount; repeatCount += 1) {
       const repeatedAlternatives = expandRepeatedAlternatives(alternatives, repeatCount);
       for (const alt of repeatedAlternatives) {
         const combined = `${prefix}${alt}${suffix}`;
