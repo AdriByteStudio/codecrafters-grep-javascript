@@ -47,6 +47,25 @@ function parsePattern(pattern) {
     tokens[tokens.length - 1].exactCount = count;
   }
 
+  function attachAtLeastQuantifier(minCount) {
+    if (
+      tokens.length === 0 ||
+      tokens[tokens.length - 1].quantifier ||
+      tokens[tokens.length - 1].exactCount !== undefined ||
+      tokens[tokens.length - 1].atLeastCount !== undefined
+    ) {
+      tokens.push({ type: "literal", value: "{" });
+      for (const digit of String(minCount)) {
+        tokens.push({ type: "literal", value: digit });
+      }
+      tokens.push({ type: "literal", value: "," });
+      tokens.push({ type: "literal", value: "}" });
+      return;
+    }
+
+    tokens[tokens.length - 1].atLeastCount = minCount;
+  }
+
   for (let i = 0; i < rawPattern.length;) {
     const ch = rawPattern[i];
 
@@ -77,6 +96,12 @@ function parsePattern(pattern) {
         const content = rawPattern.slice(i + 1, closeIndex);
         if (/^\d+$/.test(content)) {
           attachExactQuantifier(Number(content));
+          i = closeIndex + 1;
+          continue;
+        }
+
+        if (/^\d+,$/.test(content)) {
+          attachAtLeastQuantifier(Number(content.slice(0, -1)));
           i = closeIndex + 1;
           continue;
         }
@@ -178,6 +203,26 @@ function matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored = false) {
       }
 
       return matchFrom(nextIndex, tokenIndex + 1);
+    }
+
+    if (token.atLeastCount !== undefined) {
+      let maxIndex = inputIndex;
+      while (maxIndex < inputLine.length && tokenMatches(token, inputLine[maxIndex])) {
+        maxIndex += 1;
+      }
+
+      if (maxIndex < inputIndex + token.atLeastCount) {
+        return null;
+      }
+
+      for (let nextIndex = maxIndex; nextIndex >= inputIndex + token.atLeastCount; nextIndex -= 1) {
+        const result = matchFrom(nextIndex, tokenIndex + 1);
+        if (result !== null) {
+          return result;
+        }
+      }
+
+      return null;
     }
 
     if (token.quantifier !== "+" && token.quantifier !== "?" && token.quantifier !== "*") {
