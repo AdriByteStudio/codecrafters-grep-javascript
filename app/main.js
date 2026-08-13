@@ -481,109 +481,199 @@ function hasBackreference(pattern) {
   return false;
 }
 
-function expandPatternVariants(pattern, maxInputLength) {
-  const topLevelAlternatives = splitAlternatives(pattern);
+function parseBackreferenceAst(pattern) {
+  let index = 0;
+  const groupCounter = { value: 0 };
 
-  if (topLevelAlternatives.length > 1) {
-    const expanded = [];
-    for (const alternative of topLevelAlternatives) {
-      expanded.push(...expandAlternationPatterns(alternative, maxInputLength));
-    }
-    return expanded;
-  }
-
-  return expandAlternationPatterns(pattern, maxInputLength);
-}
-
-function parseBackreferenceNodes(pattern, inputLineLength) {
-  const nodes = [];
-  let segment = "";
-  let inCharClass = false;
-  let groupNumber = 0;
-
-  function pushSegmentNode() {
-    if (segment.length === 0) {
-      return;
+  function parseQuantifier() {
+    if (index >= pattern.length) {
+      return null;
     }
 
-    const compiledPatterns = expandPatternVariants(segment, inputLineLength).map((concretePattern) => {
-      return parsePattern(concretePattern);
-    });
+    const ch = pattern[index];
+    if (ch === "+") {
+      index += 1;
+      return { min: 1, max: Infinity };
+    }
 
-    nodes.push({ type: "segment", compiledPatterns });
-    segment = "";
+    if (ch === "?") {
+      index += 1;
+      return { min: 0, max: 1 };
+    }
+
+    if (ch === "*") {
+      index += 1;
+      return { min: 0, max: Infinity };
+    }
+
+    if (ch !== "{") {
+      return null;
+    }
+
+    const closeIndex = pattern.indexOf("}", index + 1);
+    if (closeIndex === -1) {
+      return null;
+    }
+
+    const content = pattern.slice(index + 1, closeIndex);
+    if (/^\d+$/.test(content)) {
+      const count = Number(content);
+      index = closeIndex + 1;
+      return { min: count, max: count };
+    }
+
+    if (/^\d+,$/.test(content)) {
+      const min = Number(content.slice(0, -1));
+      index = closeIndex + 1;
+      return { min, max: Infinity };
+    }
+
+    if (/^\d+,\d+$/.test(content)) {
+      const [minText, maxText] = content.split(",");
+      const min = Number(minText);
+      const max = Number(maxText);
+      if (min <= max) {
+        index = closeIndex + 1;
+        return { min, max };
+      }
+    }
+
+    return null;
   }
 
-  for (let i = 0; i < pattern.length;) {
-    const ch = pattern[i];
+  function parseAtom() {
+    if (index >= pattern.length) {
+      return null;
+    }
 
-    if (ch === "\\") {
-      const next = pattern[i + 1];
-      if (next === undefined) {
-        segment += ch;
-        i += 1;
-        continue;
+    const ch = pattern[index];
+
+    if (ch === "(") {
+      index += 1;
+      groupCounter.value += 1;
+      const groupNumber = groupCounter.value;
+      const alternatives = parseAlternatives(true);
+
+      if (index >= pattern.length || pattern[index] !== ")") {
+        return null;
       }
 
-      if (!inCharClass && /[1-9]/.test(next)) {
-        pushSegmentNode();
+      index += 1;
+      return { type: "capture", groupNumber, alternatives };
+    }
 
-        let j = i + 1;
+    if (ch === "\\") {
+      const next = pattern[index + 1];
+      if (next === undefined) {
+        index += 1;
+        return { type: "literal", value: "\\" };
+      }
+
+      if (/[1-9]/.test(next)) {
+        let j = index + 1;
         while (j < pattern.length && /\d/.test(pattern[j])) {
           j += 1;
         }
 
-        nodes.push({ type: "backref", groupNumber: Number(pattern.slice(i + 1, j)) });
-        i = j;
-        continue;
+        const groupNumber = Number(pattern.slice(index + 1, j));
+        index = j;
+        return { type: "backref", groupNumber };
       }
 
-      segment += pattern.slice(i, i + 2);
-      i += 2;
-      continue;
-    }
-
-    if (!inCharClass && ch === "[") {
-      inCharClass = true;
-      segment += ch;
-      i += 1;
-      continue;
-    }
-
-    if (inCharClass) {
-      segment += ch;
-      if (ch === "]") {
-        inCharClass = false;
+      index += 2;
+      if (next === "d") {
+        return { type: "digit" };
       }
-      i += 1;
-      continue;
+
+      if (next === "w") {
+        return { type: "word" };
+      }
+
+      return { type: "literal", value: next };
     }
 
-    if (ch === "(") {
-      const closeIndex = findClosingParen(pattern, i);
+    if (ch === "[") {
+      const closeIndex = pattern.indexOf("]", index + 1);
       if (closeIndex === -1) {
         return null;
       }
 
-      pushSegmentNode();
-      groupNumber += 1;
+      const content = pattern.slice(index + 1, closeIndex);
+      index = closeIndex + 1;
 
-      const groupPattern = pattern.slice(i + 1, closeIndex);
-      const compiledPatterns = expandPatternVariants(groupPattern, inputLineLength).map((concretePattern) => {
-        return parsePattern(concretePattern);
-      });
+      if (content.startsWith("^")) {
+        return { type: "negGroup", chars: new Set(content.slice(1)) };
+      }
 
-      nodes.push({ type: "capture", groupNumber, compiledPatterns });
-      i = closeIndex + 1;
-      continue;
+      return { type: "posGroup", chars: new Set(content) };
     }
 
-    segment += ch;
-    i += 1;
+    if (ch === ".") {
+      index += 1;
+      return { type: "wildcard" };
+    }
+
+    if (ch === ")") {
+      return null;
+    }
+
+    index += 1;
+    return { type: "literal", value: ch };
   }
 
-  pushSegmentNode();
-  return nodes;
+  function parseSequence(stopOnParen) {
+    const nodes = [];
+
+    while (index < pattern.length) {
+      const ch = pattern[index];
+      if (ch === "|" || (stopOnParen && ch === ")")) {
+        break;
+      }
+
+      const atom = parseAtom();
+      if (atom === null) {
+        return null;
+      }
+
+      const quantifier = parseQuantifier();
+      if (quantifier !== null) {
+        nodes.push({ type: "repeat", child: atom, min: quantifier.min, max: quantifier.max });
+      } else {
+        nodes.push(atom);
+      }
+    }
+
+    return nodes;
+  }
+
+  function parseAlternatives(stopOnParen) {
+    const alternatives = [];
+
+    while (true) {
+      const sequence = parseSequence(stopOnParen);
+      if (sequence === null) {
+        return null;
+      }
+
+      alternatives.push(sequence);
+
+      if (index < pattern.length && pattern[index] === "|") {
+        index += 1;
+        continue;
+      }
+
+      break;
+    }
+
+    return alternatives;
+  }
+
+  const alternatives = parseAlternatives(false);
+  if (alternatives === null || index !== pattern.length) {
+    return null;
+  }
+
+  return { alternatives };
 }
 
 function findMultiBackreferenceMatchInLine(inputLine, pattern, startSearchIndex = 0) {
@@ -601,70 +691,120 @@ function findMultiBackreferenceMatchInLine(inputLine, pattern, startSearchIndex 
     rawPattern = rawPattern.slice(0, -1);
   }
 
-  const nodes = parseBackreferenceNodes(rawPattern, inputLine.length);
-  if (nodes === null) {
+  const ast = parseBackreferenceAst(rawPattern);
+  if (ast === null) {
     return null;
   }
 
-  function candidateEndsForCompiled(compiledPatterns, inputIndex) {
-    const endSet = new Set();
-
-    for (const parsedPattern of compiledPatterns) {
-      if (parsedPattern.isStartAnchored && inputIndex !== 0) {
-        continue;
-      }
-
-      const ends = matchEndIndices(inputLine, inputIndex, parsedPattern.tokens, parsedPattern.isEndAnchored);
-      for (const endIndex of ends) {
-        endSet.add(endIndex);
-      }
+  function tokenMatches(node, ch) {
+    if (node.type === "digit") {
+      return isDigit(ch);
     }
 
-    return Array.from(endSet).sort((a, b) => b - a);
+    if (node.type === "word") {
+      return isWord(ch);
+    }
+
+    if (node.type === "posGroup") {
+      return node.chars.has(ch);
+    }
+
+    if (node.type === "negGroup") {
+      return !node.chars.has(ch);
+    }
+
+    if (node.type === "wildcard") {
+      return ch !== "\n";
+    }
+
+    return ch === node.value;
   }
 
-  function matchNodes(nodeIndex, inputIndex, captures) {
-    if (nodeIndex === nodes.length) {
-      if (!isEndAnchored || inputIndex === inputLine.length) {
-        return inputIndex;
-      }
-      return null;
-    }
+  function matchNode(node, inputIndex, captures) {
+    if (node.type === "repeat") {
+      const maxCount = node.max === Infinity ? inputLine.length - inputIndex : node.max;
+      const states = [];
 
-    const node = nodes[nodeIndex];
+      function consumeRepeat(currentIndex, currentCaptures, count) {
+        if (count < maxCount) {
+          const nextStates = matchNode(node.child, currentIndex, currentCaptures);
+          for (const nextState of nextStates) {
+            if (nextState.index === currentIndex) {
+              continue;
+            }
+
+            consumeRepeat(nextState.index, nextState.captures, count + 1);
+          }
+        }
+
+        if (count >= node.min) {
+          states.push({ index: currentIndex, captures: currentCaptures });
+        }
+      }
+
+      consumeRepeat(inputIndex, captures, 0);
+      return states;
+    }
 
     if (node.type === "backref") {
       const capturedText = captures[node.groupNumber];
       if (capturedText === undefined) {
-        return null;
+        return [];
       }
 
       if (inputLine.slice(inputIndex, inputIndex + capturedText.length) !== capturedText) {
-        return null;
+        return [];
       }
 
-      return matchNodes(nodeIndex + 1, inputIndex + capturedText.length, captures);
+      return [{ index: inputIndex + capturedText.length, captures }];
     }
 
-    const candidateEnds = candidateEndsForCompiled(node.compiledPatterns, inputIndex);
+    if (node.type === "capture") {
+      const results = [];
+      const innerStates = matchAlternatives(node.alternatives, inputIndex, captures);
 
-    for (const endIndex of candidateEnds) {
-      if (node.type === "capture") {
-        const nextCaptures = { ...captures, [node.groupNumber]: inputLine.slice(inputIndex, endIndex) };
-        const result = matchNodes(nodeIndex + 1, endIndex, nextCaptures);
-        if (result !== null) {
-          return result;
-        }
-        continue;
+      for (const innerState of innerStates) {
+        const updatedCaptures = {
+          ...innerState.captures,
+          [node.groupNumber]: inputLine.slice(inputIndex, innerState.index),
+        };
+
+        results.push({ index: innerState.index, captures: updatedCaptures });
       }
 
-      const result = matchNodes(nodeIndex + 1, endIndex, captures);
-      if (result !== null) {
-        return result;
-      }
+      return results;
     }
 
-    return null;
+    if (inputIndex >= inputLine.length || !tokenMatches(node, inputLine[inputIndex])) {
+      return [];
+    }
+
+    return [{ index: inputIndex + 1, captures }];
+  }
+
+  function matchSequence(nodes, nodeIndex, inputIndex, captures) {
+    if (nodeIndex >= nodes.length) {
+      return [{ index: inputIndex, captures }];
+    }
+
+    const states = [];
+    const headStates = matchNode(nodes[nodeIndex], inputIndex, captures);
+
+    for (const headState of headStates) {
+      states.push(...matchSequence(nodes, nodeIndex + 1, headState.index, headState.captures));
+    }
+
+    return states;
+  }
+
+  function matchAlternatives(alternatives, inputIndex, captures) {
+    const states = [];
+
+    for (const nodes of alternatives) {
+      states.push(...matchSequence(nodes, 0, inputIndex, captures));
+    }
+
+    return states;
   }
 
   for (let startIndex = startSearchIndex; startIndex <= inputLine.length; startIndex += 1) {
@@ -672,12 +812,16 @@ function findMultiBackreferenceMatchInLine(inputLine, pattern, startSearchIndex 
       continue;
     }
 
-    const endIndex = matchNodes(0, startIndex, {});
-    if (endIndex !== null) {
+    const states = matchAlternatives(ast.alternatives, startIndex, {});
+    for (const state of states) {
+      if (isEndAnchored && state.index !== inputLine.length) {
+        continue;
+      }
+
       return {
         startIndex,
-        endIndex,
-        text: inputLine.slice(startIndex, endIndex),
+        endIndex: state.index,
+        text: inputLine.slice(startIndex, state.index),
       };
     }
   }
