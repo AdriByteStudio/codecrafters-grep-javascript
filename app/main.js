@@ -51,6 +51,13 @@ function parsePattern(pattern) {
       continue;
     }
 
+    if (ch === "*") {
+      attachQuantifier("*");
+
+      i += 1;
+      continue;
+    }
+
     if (ch === "\\") {
       const escaped = rawPattern[i + 1];
       if (escaped === undefined) {
@@ -135,7 +142,7 @@ function matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored = false) {
 
     const token = tokens[tokenIndex];
 
-    if (token.quantifier !== "+" && token.quantifier !== "?") {
+    if (token.quantifier !== "+" && token.quantifier !== "?" && token.quantifier !== "*") {
       if (inputIndex >= inputLine.length || !tokenMatches(token, inputLine[inputIndex])) {
         return null;
       }
@@ -154,17 +161,19 @@ function matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored = false) {
       return matchFrom(inputIndex, tokenIndex + 1);
     }
 
+    const minMatches = token.quantifier === "+" ? 1 : 0;
+
     let maxIndex = inputIndex;
     while (maxIndex < inputLine.length && tokenMatches(token, inputLine[maxIndex])) {
       maxIndex += 1;
     }
 
-    // Require one or more matches, then backtrack from greedy to minimal.
-    if (maxIndex === inputIndex) {
+    // Require minimum matches for the quantifier, then backtrack from greedy to minimal.
+    if (maxIndex < inputIndex + minMatches) {
       return null;
     }
 
-    for (let nextIndex = maxIndex; nextIndex > inputIndex; nextIndex -= 1) {
+    for (let nextIndex = maxIndex; nextIndex >= inputIndex + minMatches; nextIndex -= 1) {
       const result = matchFrom(nextIndex, tokenIndex + 1);
       if (result !== null) {
         return result;
