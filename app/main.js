@@ -328,7 +328,245 @@ function matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored = false) {
   return matchFrom(startIndex, 0);
 }
 
+function matchEndIndices(inputLine, startIndex, tokens, isEndAnchored = false) {
+  function tokenMatches(token, ch) {
+    if (token.type === "digit") {
+      return isDigit(ch);
+    }
+
+    if (token.type === "word") {
+      return isWord(ch);
+    }
+
+    if (token.type === "posGroup") {
+      return token.chars.has(ch);
+    }
+
+    if (token.type === "negGroup") {
+      return !token.chars.has(ch);
+    }
+
+    if (token.type === "wildcard") {
+      return ch !== "\n";
+    }
+
+    return ch === token.value;
+  }
+
+  const results = new Set();
+
+  function collectFrom(inputIndex, tokenIndex) {
+    if (tokenIndex === tokens.length) {
+      if (!isEndAnchored || inputIndex === inputLine.length) {
+        results.add(inputIndex);
+      }
+      return;
+    }
+
+    const token = tokens[tokenIndex];
+
+    if (token.exactCount !== undefined) {
+      let nextIndex = inputIndex;
+
+      for (let count = 0; count < token.exactCount; count += 1) {
+        if (nextIndex >= inputLine.length || !tokenMatches(token, inputLine[nextIndex])) {
+          return;
+        }
+        nextIndex += 1;
+      }
+
+      collectFrom(nextIndex, tokenIndex + 1);
+      return;
+    }
+
+    if (token.atLeastCount !== undefined) {
+      let maxIndex = inputIndex;
+      while (maxIndex < inputLine.length && tokenMatches(token, inputLine[maxIndex])) {
+        maxIndex += 1;
+      }
+
+      if (maxIndex < inputIndex + token.atLeastCount) {
+        return;
+      }
+
+      for (let nextIndex = maxIndex; nextIndex >= inputIndex + token.atLeastCount; nextIndex -= 1) {
+        collectFrom(nextIndex, tokenIndex + 1);
+      }
+
+      return;
+    }
+
+    if (token.rangeCount !== undefined) {
+      const { minCount, maxCount } = token.rangeCount;
+      let maxIndex = inputIndex;
+      let matchedCount = 0;
+
+      while (maxIndex < inputLine.length && matchedCount < maxCount && tokenMatches(token, inputLine[maxIndex])) {
+        maxIndex += 1;
+        matchedCount += 1;
+      }
+
+      if (matchedCount < minCount) {
+        return;
+      }
+
+      for (let nextIndex = maxIndex; nextIndex >= inputIndex + minCount; nextIndex -= 1) {
+        collectFrom(nextIndex, tokenIndex + 1);
+      }
+
+      return;
+    }
+
+    if (token.quantifier !== "+" && token.quantifier !== "?" && token.quantifier !== "*") {
+      if (inputIndex >= inputLine.length || !tokenMatches(token, inputLine[inputIndex])) {
+        return;
+      }
+
+      collectFrom(inputIndex + 1, tokenIndex + 1);
+      return;
+    }
+
+    if (token.quantifier === "?") {
+      if (inputIndex < inputLine.length && tokenMatches(token, inputLine[inputIndex])) {
+        collectFrom(inputIndex + 1, tokenIndex + 1);
+      }
+
+      collectFrom(inputIndex, tokenIndex + 1);
+      return;
+    }
+
+    const minMatches = token.quantifier === "+" ? 1 : 0;
+    let maxIndex = inputIndex;
+    while (maxIndex < inputLine.length && tokenMatches(token, inputLine[maxIndex])) {
+      maxIndex += 1;
+    }
+
+    if (maxIndex < inputIndex + minMatches) {
+      return;
+    }
+
+    for (let nextIndex = maxIndex; nextIndex >= inputIndex + minMatches; nextIndex -= 1) {
+      collectFrom(nextIndex, tokenIndex + 1);
+    }
+  }
+
+  collectFrom(startIndex, 0);
+  return Array.from(results).sort((a, b) => b - a);
+}
+
+function findTopLevelBackreferenceIndex(pattern) {
+  let inCharClass = false;
+
+  for (let i = 0; i < pattern.length - 1; i += 1) {
+    const ch = pattern[i];
+
+    if (ch === "\\") {
+      if (!inCharClass && pattern[i + 1] === "1") {
+        return i;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (!inCharClass && ch === "[") {
+      inCharClass = true;
+      continue;
+    }
+
+    if (inCharClass && ch === "]") {
+      inCharClass = false;
+    }
+  }
+
+  return -1;
+}
+
+function findSingleBackreferenceMatchInLine(inputLine, pattern, startSearchIndex = 0) {
+  let isStartAnchored = false;
+  let isEndAnchored = false;
+  let rawPattern = pattern;
+
+  if (rawPattern.startsWith("^")) {
+    isStartAnchored = true;
+    rawPattern = rawPattern.slice(1);
+  }
+
+  if (rawPattern.endsWith("$")) {
+    isEndAnchored = true;
+    rawPattern = rawPattern.slice(0, -1);
+  }
+
+  const openIndex = rawPattern.indexOf("(");
+  if (openIndex === -1) {
+    return null;
+  }
+
+  const closeIndex = findClosingParen(rawPattern, openIndex);
+  if (closeIndex === -1) {
+    return null;
+  }
+
+  const backrefIndex = findTopLevelBackreferenceIndex(rawPattern);
+  if (backrefIndex === -1 || backrefIndex < closeIndex + 1) {
+    return null;
+  }
+
+  const beforeGroupPattern = rawPattern.slice(0, openIndex);
+  const groupPattern = rawPattern.slice(openIndex + 1, closeIndex);
+  const betweenPattern = rawPattern.slice(closeIndex + 1, backrefIndex);
+  const afterBackrefPattern = rawPattern.slice(backrefIndex + 2);
+
+  const beforeGroupTokens = parsePattern(beforeGroupPattern).tokens;
+  const groupTokens = parsePattern(groupPattern).tokens;
+  const betweenTokens = parsePattern(betweenPattern).tokens;
+  const afterBackrefTokens = parsePattern(afterBackrefPattern).tokens;
+
+  for (let startIndex = startSearchIndex; startIndex <= inputLine.length; startIndex += 1) {
+    if (isStartAnchored && startIndex !== 0) {
+      continue;
+    }
+
+    const beforeEnds = matchEndIndices(inputLine, startIndex, beforeGroupTokens, false);
+
+    for (const beforeEnd of beforeEnds) {
+      const groupEnds = matchEndIndices(inputLine, beforeEnd, groupTokens, false);
+
+      for (const groupEnd of groupEnds) {
+        const capturedText = inputLine.slice(beforeEnd, groupEnd);
+        const betweenEnds = matchEndIndices(inputLine, groupEnd, betweenTokens, false);
+
+        for (const betweenEnd of betweenEnds) {
+          if (betweenEnd + capturedText.length > inputLine.length) {
+            continue;
+          }
+
+          if (inputLine.slice(betweenEnd, betweenEnd + capturedText.length) !== capturedText) {
+            continue;
+          }
+
+          const backrefEnd = betweenEnd + capturedText.length;
+          const afterEnds = matchEndIndices(inputLine, backrefEnd, afterBackrefTokens, isEndAnchored);
+
+          if (afterEnds.length > 0) {
+            return {
+              startIndex,
+              endIndex: afterEnds[0],
+              text: inputLine.slice(startIndex, afterEnds[0]),
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 function findMatchInLine(inputLine, pattern, startSearchIndex = 0) {
+  if (findTopLevelBackreferenceIndex(pattern) !== -1) {
+    return findSingleBackreferenceMatchInLine(inputLine, pattern, startSearchIndex);
+  }
+
   const parsedPatterns = expandAlternationPatterns(pattern, inputLine.length).map((concretePattern) => {
     return parsePattern(concretePattern);
   });
