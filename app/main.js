@@ -481,6 +481,20 @@ function hasBackreference(pattern) {
   return false;
 }
 
+function expandPatternVariants(pattern, maxInputLength) {
+  const topLevelAlternatives = splitAlternatives(pattern);
+
+  if (topLevelAlternatives.length > 1) {
+    const expanded = [];
+    for (const alternative of topLevelAlternatives) {
+      expanded.push(...expandAlternationPatterns(alternative, maxInputLength));
+    }
+    return expanded;
+  }
+
+  return expandAlternationPatterns(pattern, maxInputLength);
+}
+
 function parseBackreferenceNodes(pattern, inputLineLength) {
   const nodes = [];
   let segment = "";
@@ -492,7 +506,7 @@ function parseBackreferenceNodes(pattern, inputLineLength) {
       return;
     }
 
-    const compiledPatterns = expandAlternationPatterns(segment, inputLineLength).map((concretePattern) => {
+    const compiledPatterns = expandPatternVariants(segment, inputLineLength).map((concretePattern) => {
       return parsePattern(concretePattern);
     });
 
@@ -555,7 +569,7 @@ function parseBackreferenceNodes(pattern, inputLineLength) {
       groupNumber += 1;
 
       const groupPattern = pattern.slice(i + 1, closeIndex);
-      const compiledPatterns = expandAlternationPatterns(groupPattern, inputLineLength).map((concretePattern) => {
+      const compiledPatterns = expandPatternVariants(groupPattern, inputLineLength).map((concretePattern) => {
         return parsePattern(concretePattern);
       });
 
