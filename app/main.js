@@ -34,6 +34,19 @@ function parsePattern(pattern) {
     tokens[tokens.length - 1].quantifier = qchar;
   }
 
+  function attachExactQuantifier(count) {
+    if (tokens.length === 0 || tokens[tokens.length - 1].quantifier || tokens[tokens.length - 1].exactCount !== undefined) {
+      tokens.push({ type: "literal", value: "{" });
+      for (const digit of String(count)) {
+        tokens.push({ type: "literal", value: digit });
+      }
+      tokens.push({ type: "literal", value: "}" });
+      return;
+    }
+
+    tokens[tokens.length - 1].exactCount = count;
+  }
+
   for (let i = 0; i < rawPattern.length;) {
     const ch = rawPattern[i];
 
@@ -56,6 +69,18 @@ function parsePattern(pattern) {
 
       i += 1;
       continue;
+    }
+
+    if (ch === "{") {
+      const closeIndex = rawPattern.indexOf("}", i + 1);
+      if (closeIndex !== -1) {
+        const content = rawPattern.slice(i + 1, closeIndex);
+        if (/^\d+$/.test(content)) {
+          attachExactQuantifier(Number(content));
+          i = closeIndex + 1;
+          continue;
+        }
+      }
     }
 
     if (ch === "\\") {
@@ -141,6 +166,19 @@ function matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored = false) {
     }
 
     const token = tokens[tokenIndex];
+
+    if (token.exactCount !== undefined) {
+      let nextIndex = inputIndex;
+
+      for (let count = 0; count < token.exactCount; count += 1) {
+        if (nextIndex >= inputLine.length || !tokenMatches(token, inputLine[nextIndex])) {
+          return null;
+        }
+        nextIndex += 1;
+      }
+
+      return matchFrom(nextIndex, tokenIndex + 1);
+    }
 
     if (token.quantifier !== "+" && token.quantifier !== "?" && token.quantifier !== "*") {
       if (inputIndex >= inputLine.length || !tokenMatches(token, inputLine[inputIndex])) {
