@@ -454,15 +454,15 @@ function matchEndIndices(inputLine, startIndex, tokens, isEndAnchored = false) {
   return Array.from(results).sort((a, b) => b - a);
 }
 
-function findTopLevelBackreferenceIndex(pattern) {
+function hasBackreference(pattern) {
   let inCharClass = false;
 
   for (let i = 0; i < pattern.length - 1; i += 1) {
     const ch = pattern[i];
 
     if (ch === "\\") {
-      if (!inCharClass && pattern[i + 1] === "1") {
-        return i;
+      if (!inCharClass && /[1-9]/.test(pattern[i + 1])) {
+        return true;
       }
       i += 1;
       continue;
@@ -478,10 +478,101 @@ function findTopLevelBackreferenceIndex(pattern) {
     }
   }
 
-  return -1;
+  return false;
 }
 
-function findSingleBackreferenceMatchInLine(inputLine, pattern, startSearchIndex = 0) {
+function parseBackreferenceNodes(pattern, inputLineLength) {
+  const nodes = [];
+  let segment = "";
+  let inCharClass = false;
+  let groupNumber = 0;
+
+  function pushSegmentNode() {
+    if (segment.length === 0) {
+      return;
+    }
+
+    const compiledPatterns = expandAlternationPatterns(segment, inputLineLength).map((concretePattern) => {
+      return parsePattern(concretePattern);
+    });
+
+    nodes.push({ type: "segment", compiledPatterns });
+    segment = "";
+  }
+
+  for (let i = 0; i < pattern.length;) {
+    const ch = pattern[i];
+
+    if (ch === "\\") {
+      const next = pattern[i + 1];
+      if (next === undefined) {
+        segment += ch;
+        i += 1;
+        continue;
+      }
+
+      if (!inCharClass && /[1-9]/.test(next)) {
+        pushSegmentNode();
+
+        let j = i + 1;
+        while (j < pattern.length && /\d/.test(pattern[j])) {
+          j += 1;
+        }
+
+        nodes.push({ type: "backref", groupNumber: Number(pattern.slice(i + 1, j)) });
+        i = j;
+        continue;
+      }
+
+      segment += pattern.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+
+    if (!inCharClass && ch === "[") {
+      inCharClass = true;
+      segment += ch;
+      i += 1;
+      continue;
+    }
+
+    if (inCharClass) {
+      segment += ch;
+      if (ch === "]") {
+        inCharClass = false;
+      }
+      i += 1;
+      continue;
+    }
+
+    if (ch === "(") {
+      const closeIndex = findClosingParen(pattern, i);
+      if (closeIndex === -1) {
+        return null;
+      }
+
+      pushSegmentNode();
+      groupNumber += 1;
+
+      const groupPattern = pattern.slice(i + 1, closeIndex);
+      const compiledPatterns = expandAlternationPatterns(groupPattern, inputLineLength).map((concretePattern) => {
+        return parsePattern(concretePattern);
+      });
+
+      nodes.push({ type: "capture", groupNumber, compiledPatterns });
+      i = closeIndex + 1;
+      continue;
+    }
+
+    segment += ch;
+    i += 1;
+  }
+
+  pushSegmentNode();
+  return nodes;
+}
+
+function findMultiBackreferenceMatchInLine(inputLine, pattern, startSearchIndex = 0) {
   let isStartAnchored = false;
   let isEndAnchored = false;
   let rawPattern = pattern;
@@ -496,66 +587,84 @@ function findSingleBackreferenceMatchInLine(inputLine, pattern, startSearchIndex
     rawPattern = rawPattern.slice(0, -1);
   }
 
-  const openIndex = rawPattern.indexOf("(");
-  if (openIndex === -1) {
+  const nodes = parseBackreferenceNodes(rawPattern, inputLine.length);
+  if (nodes === null) {
     return null;
   }
 
-  const closeIndex = findClosingParen(rawPattern, openIndex);
-  if (closeIndex === -1) {
-    return null;
+  function candidateEndsForCompiled(compiledPatterns, inputIndex) {
+    const endSet = new Set();
+
+    for (const parsedPattern of compiledPatterns) {
+      if (parsedPattern.isStartAnchored && inputIndex !== 0) {
+        continue;
+      }
+
+      const ends = matchEndIndices(inputLine, inputIndex, parsedPattern.tokens, parsedPattern.isEndAnchored);
+      for (const endIndex of ends) {
+        endSet.add(endIndex);
+      }
+    }
+
+    return Array.from(endSet).sort((a, b) => b - a);
   }
 
-  const backrefIndex = findTopLevelBackreferenceIndex(rawPattern);
-  if (backrefIndex === -1 || backrefIndex < closeIndex + 1) {
+  function matchNodes(nodeIndex, inputIndex, captures) {
+    if (nodeIndex === nodes.length) {
+      if (!isEndAnchored || inputIndex === inputLine.length) {
+        return inputIndex;
+      }
+      return null;
+    }
+
+    const node = nodes[nodeIndex];
+
+    if (node.type === "backref") {
+      const capturedText = captures[node.groupNumber];
+      if (capturedText === undefined) {
+        return null;
+      }
+
+      if (inputLine.slice(inputIndex, inputIndex + capturedText.length) !== capturedText) {
+        return null;
+      }
+
+      return matchNodes(nodeIndex + 1, inputIndex + capturedText.length, captures);
+    }
+
+    const candidateEnds = candidateEndsForCompiled(node.compiledPatterns, inputIndex);
+
+    for (const endIndex of candidateEnds) {
+      if (node.type === "capture") {
+        const nextCaptures = { ...captures, [node.groupNumber]: inputLine.slice(inputIndex, endIndex) };
+        const result = matchNodes(nodeIndex + 1, endIndex, nextCaptures);
+        if (result !== null) {
+          return result;
+        }
+        continue;
+      }
+
+      const result = matchNodes(nodeIndex + 1, endIndex, captures);
+      if (result !== null) {
+        return result;
+      }
+    }
+
     return null;
   }
-
-  const beforeGroupPattern = rawPattern.slice(0, openIndex);
-  const groupPattern = rawPattern.slice(openIndex + 1, closeIndex);
-  const betweenPattern = rawPattern.slice(closeIndex + 1, backrefIndex);
-  const afterBackrefPattern = rawPattern.slice(backrefIndex + 2);
-
-  const beforeGroupTokens = parsePattern(beforeGroupPattern).tokens;
-  const groupTokens = parsePattern(groupPattern).tokens;
-  const betweenTokens = parsePattern(betweenPattern).tokens;
-  const afterBackrefTokens = parsePattern(afterBackrefPattern).tokens;
 
   for (let startIndex = startSearchIndex; startIndex <= inputLine.length; startIndex += 1) {
     if (isStartAnchored && startIndex !== 0) {
       continue;
     }
 
-    const beforeEnds = matchEndIndices(inputLine, startIndex, beforeGroupTokens, false);
-
-    for (const beforeEnd of beforeEnds) {
-      const groupEnds = matchEndIndices(inputLine, beforeEnd, groupTokens, false);
-
-      for (const groupEnd of groupEnds) {
-        const capturedText = inputLine.slice(beforeEnd, groupEnd);
-        const betweenEnds = matchEndIndices(inputLine, groupEnd, betweenTokens, false);
-
-        for (const betweenEnd of betweenEnds) {
-          if (betweenEnd + capturedText.length > inputLine.length) {
-            continue;
-          }
-
-          if (inputLine.slice(betweenEnd, betweenEnd + capturedText.length) !== capturedText) {
-            continue;
-          }
-
-          const backrefEnd = betweenEnd + capturedText.length;
-          const afterEnds = matchEndIndices(inputLine, backrefEnd, afterBackrefTokens, isEndAnchored);
-
-          if (afterEnds.length > 0) {
-            return {
-              startIndex,
-              endIndex: afterEnds[0],
-              text: inputLine.slice(startIndex, afterEnds[0]),
-            };
-          }
-        }
-      }
+    const endIndex = matchNodes(0, startIndex, {});
+    if (endIndex !== null) {
+      return {
+        startIndex,
+        endIndex,
+        text: inputLine.slice(startIndex, endIndex),
+      };
     }
   }
 
@@ -563,8 +672,8 @@ function findSingleBackreferenceMatchInLine(inputLine, pattern, startSearchIndex
 }
 
 function findMatchInLine(inputLine, pattern, startSearchIndex = 0) {
-  if (findTopLevelBackreferenceIndex(pattern) !== -1) {
-    return findSingleBackreferenceMatchInLine(inputLine, pattern, startSearchIndex);
+  if (hasBackreference(pattern)) {
+    return findMultiBackreferenceMatchInLine(inputLine, pattern, startSearchIndex);
   }
 
   const parsedPatterns = expandAlternationPatterns(pattern, inputLine.length).map((concretePattern) => {
