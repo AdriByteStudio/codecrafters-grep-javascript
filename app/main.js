@@ -338,6 +338,46 @@ function splitAlternatives(groupContent) {
 }
 
 function expandAlternationPatterns(pattern) {
+  function parseExactCountAt(text, index) {
+    if (index >= text.length || text[index] !== "{") {
+      return null;
+    }
+
+    const closeIndex = text.indexOf("}", index + 1);
+    if (closeIndex === -1) {
+      return null;
+    }
+
+    const content = text.slice(index + 1, closeIndex);
+    if (!/^\d+$/.test(content)) {
+      return null;
+    }
+
+    return {
+      count: Number(content),
+      endIndex: closeIndex + 1,
+    };
+  }
+
+  function expandRepeatedAlternatives(alternatives, count) {
+    if (count === 0) {
+      return [""];
+    }
+
+    let combinations = [""];
+    for (let i = 0; i < count; i += 1) {
+      const nextCombinations = [];
+      for (const prefix of combinations) {
+        for (const alt of alternatives) {
+          nextCombinations.push(prefix + alt);
+        }
+      }
+      combinations = nextCombinations;
+    }
+
+    return combinations;
+  }
+
   let openIndex = -1;
   let inCharClass = false;
 
@@ -378,8 +418,14 @@ function expandAlternationPatterns(pattern) {
 
   const prefix = pattern.slice(0, openIndex);
   const groupContent = pattern.slice(openIndex + 1, closeIndex);
-  const suffix = pattern.slice(closeIndex + 1);
-  const alternatives = splitAlternatives(groupContent);
+  let suffix = pattern.slice(closeIndex + 1);
+  let alternatives = splitAlternatives(groupContent);
+
+  const exactCount = parseExactCountAt(pattern, closeIndex + 1);
+  if (exactCount !== null) {
+    alternatives = expandRepeatedAlternatives(alternatives, exactCount.count);
+    suffix = pattern.slice(exactCount.endIndex);
+  }
 
   const expanded = [];
   for (const alt of alternatives) {
