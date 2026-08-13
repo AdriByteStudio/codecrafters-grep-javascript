@@ -270,7 +270,7 @@ function matchAtEndIndex(inputLine, startIndex, tokens, isEndAnchored = false) {
 }
 
 function findMatchInLine(inputLine, pattern, startSearchIndex = 0) {
-  const parsedPatterns = expandAlternationPatterns(pattern).map((concretePattern) => {
+  const parsedPatterns = expandAlternationPatterns(pattern, inputLine.length).map((concretePattern) => {
     return parsePattern(concretePattern);
   });
 
@@ -382,8 +382,8 @@ function splitAlternatives(groupContent) {
   return alternatives;
 }
 
-function expandAlternationPatterns(pattern) {
-  function parseExactCountAt(text, index) {
+function expandAlternationPatterns(pattern, maxInputLength = null) {
+  function parseGroupQuantifierAt(text, index) {
     if (index >= text.length || text[index] !== "{") {
       return null;
     }
@@ -394,14 +394,21 @@ function expandAlternationPatterns(pattern) {
     }
 
     const content = text.slice(index + 1, closeIndex);
-    if (!/^\d+$/.test(content)) {
-      return null;
+    if (/^\d+$/.test(content)) {
+      return {
+        exactCount: Number(content),
+        endIndex: closeIndex + 1,
+      };
     }
 
-    return {
-      count: Number(content),
-      endIndex: closeIndex + 1,
-    };
+    if (/^\d+,$/.test(content)) {
+      return {
+        atLeastCount: Number(content.slice(0, -1)),
+        endIndex: closeIndex + 1,
+      };
+    }
+
+    return null;
   }
 
   function expandRepeatedAlternatives(alternatives, count) {
@@ -466,16 +473,43 @@ function expandAlternationPatterns(pattern) {
   let suffix = pattern.slice(closeIndex + 1);
   let alternatives = splitAlternatives(groupContent);
 
-  const exactCount = parseExactCountAt(pattern, closeIndex + 1);
-  if (exactCount !== null) {
-    alternatives = expandRepeatedAlternatives(alternatives, exactCount.count);
-    suffix = pattern.slice(exactCount.endIndex);
+  const expanded = [];
+  const groupQuantifier = parseGroupQuantifierAt(pattern, closeIndex + 1);
+
+  if (groupQuantifier !== null && groupQuantifier.exactCount !== undefined) {
+    alternatives = expandRepeatedAlternatives(alternatives, groupQuantifier.exactCount);
+    suffix = pattern.slice(groupQuantifier.endIndex);
+
+    for (const alt of alternatives) {
+      const combined = `${prefix}${alt}${suffix}`;
+      expanded.push(...expandAlternationPatterns(combined, maxInputLength));
+    }
+
+    return expanded;
   }
 
-  const expanded = [];
+  if (groupQuantifier !== null && groupQuantifier.atLeastCount !== undefined) {
+    const minAltLength = Math.min(...alternatives.map((alt) => alt.length));
+    const safeMinAltLength = minAltLength <= 0 ? 1 : minAltLength;
+    const lineBound = maxInputLength === null ? groupQuantifier.atLeastCount : maxInputLength;
+    const maxRepeatCount = Math.max(groupQuantifier.atLeastCount, Math.floor(lineBound / safeMinAltLength));
+
+    suffix = pattern.slice(groupQuantifier.endIndex);
+
+    for (let repeatCount = groupQuantifier.atLeastCount; repeatCount <= maxRepeatCount; repeatCount += 1) {
+      const repeatedAlternatives = expandRepeatedAlternatives(alternatives, repeatCount);
+      for (const alt of repeatedAlternatives) {
+        const combined = `${prefix}${alt}${suffix}`;
+        expanded.push(...expandAlternationPatterns(combined, maxInputLength));
+      }
+    }
+
+    return expanded;
+  }
+
   for (const alt of alternatives) {
     const combined = `${prefix}${alt}${suffix}`;
-    expanded.push(...expandAlternationPatterns(combined));
+    expanded.push(...expandAlternationPatterns(combined, maxInputLength));
   }
 
   return expanded;
